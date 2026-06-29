@@ -65,7 +65,7 @@
             DATABASE_PASSWORD: "{{ db_password }}"
         state: present
 
-    # 3. TRIỂN KHAI ỨNG DỤNG (Bao gồm cấu hình Biến môi trường và Giới hạn tài nguyên)
+    # 3. TRIỂN KHAI ỨNG DỤNG (Đổi sang Game 2048 Web Unprivileged - Chạy quyền user thường)
     - name: Deploy Web Application with Environment Variables
       kubernetes.core.k8s:
         definition:
@@ -88,7 +88,8 @@
               spec:
                 containers:
                   - name: web-container
-                    image: quay.io/donnydavis/openshift-hello:latest
+                    # Sử dụng image game 2048 được tối ưu chạy cổng 8080 không cần root
+                    image: docker.io/gitpod/open-workspace-images-preview:browser-2048
                     ports:
                       - containerPort: 8080
                     # Giới hạn tài nguyên giúp tối ưu và không bị kẹt Quota của Sandbox
