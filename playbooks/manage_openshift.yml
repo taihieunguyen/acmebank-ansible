@@ -6,7 +6,7 @@
   vars:
     # Định nghĩa chính xác Namespace được cấp trên OpenShift Sandbox
     target_project: "nguyentaihieu004-dev"
-    app_name: "web-demo-app"
+    app_name: "elastic-demo-app" # Đổi tên ứng dụng sang Elastic
     db_password: "SuperSecretPassword123"
     
     # Định nghĩa thông tin RBAC cục bộ hợp lệ trong Namespace
@@ -47,11 +47,11 @@
               namespace: "{{ target_project }}"
           roleRef:
             kind: ClusterRole
-            name: view # Sử dụng quyền view chuẩn (Hợp lệ với quyền hạn Developer)
+            name: view
             apiGroup: rbac.authorization.k8s.io
         state: present
 
-    # 2. TẠO SECRET (Mã hóa Base64 tự động bằng biến stringData)
+    # 2. TẠO SECRET
     - name: Create Application Secret for Database Connection
       kubernetes.core.k8s:
         definition:
@@ -65,7 +65,7 @@
             DATABASE_PASSWORD: "{{ db_password }}"
         state: present
 
-    # 3. TRIỂN KHAI ỨNG DỤNG (Đổi sang Game 2048 Web Unprivileged - Chạy quyền user thường)
+    # 3. TRIỂN KHAI ỨNG DỤNG (Đổi sang Elasticsearch Single-Node tối ưu cho Sandbox)
     - name: Deploy Web Application with Environment Variables
       kubernetes.core.k8s:
         definition:
@@ -87,23 +87,25 @@
                   app: "{{ app_name }}"
               spec:
                 containers:
-                  - name: web-container
-                    # Sử dụng image game 2048 được tối ưu chạy cổng 8080 không cần root
-                    image: docker.io/gitpod/open-workspace-images-preview:browser-2048
+                  - name: elastic-container
+                    # Sử dụng image chính thức từ Elastic Registry (Tránh nghẽn Docker Hub)
+                    image: docker.elastic.co/elasticsearch/elasticsearch:7.17.10
                     ports:
-                      - containerPort: 8080
-                    # Giới hạn tài nguyên giúp tối ưu và không bị kẹt Quota của Sandbox
+                      - containerPort: 9200 # Cổng Web API mặc định của Elasticsearch
                     resources:
                       limits:
+                        cpu: "400m"
+                        memory: "512Mi" # Tăng nhẹ RAM để Elastic chạy mượt mà
+                      requests:
                         cpu: "200m"
                         memory: "256Mi"
-                      requests:
-                        cpu: "100m"
-                        memory: "128Mi"
-                    # Cấu hình biến môi trường lấy trực tiếp từ Secret
                     env:
-                      - name: APP_ENV
-                        value: "Development"
+                      - name: discovery.type
+                        value: "single-node" # Ép chạy chế độ đơn cụm để không tốn tài nguyên
+                      - name: xpack.security.enabled
+                        value: "false" # Tắt security tạm thời để bạn test nhanh không cần token phức tạp
+                      - name: ES_JAVA_OPTS
+                        value: "-Xms128m -Xmx256m" # Giới hạn bộ nhớ Java Heap trong giới hạn Sandbox
                       - name: DB_PASS
                         valueFrom:
                           secretKeyRef:
@@ -111,7 +113,7 @@
                             key: DATABASE_PASSWORD
         state: present
 
-    # 4. TẠO SERVICE NỘI BỘ (East-West Traffic)
+    # 4. TẠO SERVICE NỘI BỘ (Đổi sang cổng 9200)
     - name: Create Internal Cluster Service for the App
       kubernetes.core.k8s:
         definition:
@@ -124,13 +126,13 @@
               app: "{{ app_name }}"
           spec:
             ports:
-              - port: 8080
-                targetPort: 8080
+              - port: 9200
+                targetPort: 9200
             selector:
               app: "{{ app_name }}"
         state: present
 
-    # 5. TẠO ROUTE PHÁT HÀNH ỨNG DỤNG RA NGOÀI (Đặc trưng của OpenShift)
+    # 5. TẠO ROUTE PHÁT HÀNH ỨNG DỤNG RA NGOÀI (Đổi sang targetPort 9200)
     - name: Expose Service via OpenShift Route
       kubernetes.core.k8s:
         definition:
@@ -144,9 +146,9 @@
               kind: Service
               name: "{{ app_name }}-svc"
             port:
-              targetPort: 8080
+              targetPort: 9200
             tls:
-              termination: edge # Tự động kích hoạt SSL/TLS termination tại Edge Router
+              termination: edge
         state: present
 
     # ĐOẠN CUỐI: TRÍCH XUẤT VÀ KIỂM TRA ĐƯỜNG DẪN ỨNG DỤNG
@@ -160,4 +162,4 @@
 
     - name: Display Application URL
       ansible.builtin.debug:
-        msg: "Your application is ready at: https://{{ route_info.resources[0].spec.host }}"
+        msg: "Elasticsearch Web API is ready at: https://{{ route_info.resources[0].spec.host }}"
